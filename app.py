@@ -7,7 +7,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # --- 1. CONFIGURATION (DEMO MODE) ---
 # 1. Paste your NEW key here
-API_KEY = "AIzaSyALkdgFSrUciFaE--xZdDhQ0OfJsji_Opg" 
+API_KEY = "AIzaSyA0SmLYBntwkTSGwY68PIsuouaodQ5gDFM" 
 
 # 2. Force the environment to recognize it (Fixes 'Invalid Key' errors)
 os.environ["GOOGLE_API_KEY"] = API_KEY
