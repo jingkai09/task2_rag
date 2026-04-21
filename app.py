@@ -8,116 +8,92 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, List
 
-# --- 1. INITIALIZATION & SECURITY ---
+# --- 1. INITIALIZATION ---
 load_dotenv()
 st.set_page_config(page_title="MaiStorage Agentic RAG", layout="wide", page_icon="🤖")
 
-# Priority for API Key: Streamlit Secrets (Cloud) -> .env file (Local)
 api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
 if not api_key:
-    st.error("🔑 API Key not found. Please add GOOGLE_API_KEY to Streamlit Secrets or .env file.")
+    st.error("🔑 API Key not found in Secrets or .env")
     st.stop()
 
-# Initialize Gemini 1.5 Flash and the updated Embedding model
+# UPDATED MODELS FOR APRIL 2026
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
-embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=api_key)
+# Using the new 'gemini-embedding-001' which replaces the old 'text-embedding-004'
+embeddings = GoogleGenerativeAIEmbeddings(
+    model="models/gemini-embedding-001", 
+    google_api_key=api_key
+)
 
-# --- 2. AGENT STATE DEFINITION ---
 class AgentState(TypedDict):
     question: str
     generation: str
     documents: List[str]
 
-# --- 3. SIDEBAR: KNOWLEDGE MANAGEMENT ---
+# --- 2. SIDEBAR UPLOADER ---
 with st.sidebar:
     st.header("📂 Knowledge Management")
-    st.write("Upload technical documents to build the agent's memory.")
-    uploaded_file = st.file_uploader("Upload MaiStorage Tech Specs (PDF)", type="pdf")
+    uploaded_file = st.file_uploader("Upload Tech Specs (PDF)", type="pdf")
     
     if uploaded_file:
-        with st.spinner("Processing PDF and building Vector Store..."):
-            # Save temp file
-            with open("temp_knowledge.pdf", "wb") as f:
+        with st.spinner("Indexing into Unified Embedding Space..."):
+            with open("temp_k.pdf", "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
-            # Load & Split
-            loader = PyPDFLoader("temp_knowledge.pdf")
+            loader = PyPDFLoader("temp_k.pdf")
             docs = loader.load()
             
-            # Recursive splitting maintains technical document structure
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-            chunks = text_splitter.split_documents(docs)
+            # Recursive splitting to keep technical context intact
+            # 
+            splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            chunks = splitter.split_documents(docs)
             
-            # Store in Session State to keep it alive during the session
-            # We use a unique collection_name to avoid cache conflicts
+            # Create the vector store
             st.session_state.vector_db = Chroma.from_documents(
                 documents=chunks, 
                 embedding=embeddings,
-                collection_name="temp_collection"
+                collection_name="maistorage_internal"
             )
-            st.success("✅ Knowledge Base Updated!")
+            st.success("✅ Knowledge Base Ready")
 
-# --- 4. AGENT NODES (The Reasoning Logic) ---
-
-def retrieve_node(state: AgentState):
-    """Retrieve chunks from the uploaded knowledge base."""
+# --- 3. AGENTIC NODES ---
+def retrieve_node(state):
     if "vector_db" not in st.session_state:
         return {"documents": []}
-    
-    # Retrieve top 3 relevant chunks
     docs = st.session_state.vector_db.similarity_search(state["question"], k=3)
     return {"documents": docs}
 
-def generate_node(state: AgentState):
-    """Grounded generation with a 'No-Data' safety check."""
+def generate_node(state):
     if not state["documents"]:
-        return {"generation": "⚠️ I don't have any internal data regarding this query. Please upload a relevant PDF in the sidebar."}
+        return {"generation": "⚠️ Please upload a document to begin."}
     
-    # Format context with source metadata for citations
-    context = "\n\n".join([f"[Source: {d.metadata.get('source', 'PDF')}] {d.page_content}" for d in state["documents"]])
-    
-    prompt = f"""You are a MaiStorage Technical Assistant. 
-    Using the context provided below, answer the user's question. 
-    Strictly avoid hallucinations. If the answer is not in the context, say you don't know.
-    
-    CONTEXT:
-    {context}
-    
-    QUESTION: {state['question']}"""
+    context = "\n\n".join([d.page_content for d in state["documents"]])
+    prompt = f"Using ONLY this context: {context}\n\nQuestion: {state['question']}"
     
     response = llm.invoke(prompt)
     return {"generation": response.content}
 
-# --- 5. LANGGRAPH ORCHESTRATION ---
+# --- 4. ORCHESTRATION ---
 workflow = StateGraph(AgentState)
 workflow.add_node("retrieve", retrieve_node)
 workflow.add_node("generate", generate_node)
-
 workflow.set_entry_point("retrieve")
 workflow.add_edge("retrieve", "generate")
 workflow.add_edge("generate", END)
-agent_app = workflow.compile()
+agent = workflow.compile()
 
-# --- 6. CHAT INTERFACE ---
+# --- 5. UI ---
 st.title("🤖 MaiStorage Agentic RAG")
-st.markdown("---")
 
-# Instruction for the interviewer
 if "vector_db" not in st.session_state:
-    st.info("Please upload a PDF in the sidebar to begin the Agentic RAG demo.")
+    st.info("Agent is offline. Please upload a PDF spec sheet to initialize.")
 
-query = st.chat_input("Ask a technical question about internal specs...")
+query = st.chat_input("Ask about aiDAPTIV+ or storage specs...")
 
 if query:
-    # Display user message
-    with st.chat_message("user"):
-        st.write(query)
-    
-    # Display assistant response
+    with st.chat_message("user"): st.write(query)
     with st.chat_message("assistant"):
-        with st.status("Agent Reasoning...", expanded=True) as status:
-            result = agent_app.invoke({"question": query})
-            status.update(label="Response Generated", state="complete")
-        
-        st.markdown(result["generation"])
+        with st.status("Agent Reasoning..."):
+            result = agent.invoke({"question": query})
+        st.write(result["generation"])
