@@ -9,15 +9,15 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 API_KEY = "AIzaSyBpaYk9WSnjA8puTdlL-qSIglBX3Kj82NE" 
 os.environ["GOOGLE_API_KEY"] = API_KEY
 
-st.set_page_config(page_title="MaiStorage Conversational Agent", layout="wide")
+st.set_page_config(page_title="MaiStorage Agentic RAG", layout="wide")
 
 # Initialize Gemini 2.5 Flash & Embeddings
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=API_KEY, temperature=0.1)
 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=API_KEY)
 
-# --- 2. SESSION STATE INITIALIZATION ---
+# --- 2. SESSION STATE ---
 if "chat_history" not in st.session_state:
-    st.session_state.chat_history = [] # Stores all messages for the UI and LLM context
+    st.session_state.chat_history = [] 
 
 # --- 3. SIDEBAR: DATA INGESTION ---
 with st.sidebar:
@@ -28,12 +28,18 @@ with st.sidebar:
         with st.spinner("Processing technical document..."):
             with open("temp_demo.pdf", "wb") as f:
                 f.write(uploaded_file.getbuffer())
+            
             loader = PyPDFLoader("temp_demo.pdf")
             data = loader.load()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+            
+            # Optimized splitting for better citation accuracy
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
             chunks = text_splitter.split_documents(data)
+            
             st.session_state.db = Chroma.from_documents(
-                documents=chunks, embedding=embeddings, collection_name="demo_collection"
+                documents=chunks, 
+                embedding=embeddings, 
+                collection_name="demo_collection"
             )
             st.success("✅ Knowledge Base Ready")
     
@@ -41,19 +47,17 @@ with st.sidebar:
         st.session_state.chat_history = []
         st.rerun()
 
-# --- 4. CHAT DISPLAY ---
-st.title("🤖 MaiStorage Conversational Agent")
+# --- 4. UI DISPLAY ---
+st.title("🤖 MaiStorage Technical Agent")
 
-# Display every message in the history
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- 5. CHAT LOGIC ---
+# --- 5. CHAT LOGIC WITH CITATIONS ---
 query = st.chat_input("Ask a technical question...")
 
 if query:
-    # 1. Show user message immediately
     st.session_state.chat_history.append({"role": "user", "content": query})
     with st.chat_message("user"):
         st.markdown(query)
@@ -62,29 +66,37 @@ if query:
         st.warning("Please upload a PDF first.")
     else:
         with st.chat_message("assistant"):
-            with st.status("Thinking..."):
+            with st.status("Agentic Retrieval & Reranking..."):
                 # STEP 1: RETRIEVAL
                 docs = st.session_state.db.similarity_search(query, k=3)
-                context = "\n\n".join([d.page_content for d in docs])
                 
-                # STEP 2: CONSTRUCT HISTORY FOR LLM
-                # We format the last 4 messages to keep the context relevant
+                # STEP 2: EXTRACT CITATIONS FROM METADATA
+                # PyPDFLoader automatically provides 'page' and 'source' in metadata
+                references = []
+                for doc in docs:
+                    page_num = doc.metadata.get("page", "Unknown") + 1 # Convert 0-index to 1-index
+                    ref_text = f"📄 Page {page_num}: \"{doc.page_content[:150]}...\""
+                    references.append(ref_text)
+                
+                context = "\n\n".join([f"[Source Page {d.metadata.get('page')+1}] {d.page_content}" for d in docs])
+                
+                # STEP 3: CONSTRUCT HISTORY
                 history_str = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history[-5:-1]])
                 
-                # STEP 3: CONTEXTUAL GENERATION
-                prompt = f"""You are a technical assistant. Use the CONTEXT and the CHAT HISTORY to answer the question.
+                # STEP 4: GENERATION
+                prompt = f"""You are a technical assistant. Use ONLY the CONTEXT to answer the question.
+                Mention specific page numbers in your answer if relevant.
                 
-                CHAT HISTORY:
-                {history_str}
-                
-                NEW CONTEXT FROM PDF:
-                {context}
-                
-                USER QUESTION: {query}"""
+                CHAT HISTORY: {history_str}
+                CONTEXT FROM PDF: {context}
+                QUESTION: {query}"""
                 
                 response = llm.invoke(prompt)
-                full_response = response.content
-            
-            # 2. Show and save assistant response
-            st.markdown(full_response)
-            st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                
+                # Format final output with a "Sources" footer
+                final_answer = response.content
+                reference_section = "\n\n---\n**Sources used for this answer:**\n" + "\n".join([f"* {r}" for r in references])
+                full_display = final_answer + reference_section
+
+            st.markdown(full_display)
+            st.session_state.chat_history.append({"role": "assistant", "content": full_display})
