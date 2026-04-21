@@ -5,3 +5,4 @@ langgraph
 chromadb
 python-dotenv
 pypdf
+protobuf==4.25.3
