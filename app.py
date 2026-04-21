@@ -32,7 +32,6 @@ with st.sidebar:
             loader = PyPDFLoader("temp_demo.pdf")
             data = loader.load()
             
-            # Optimized splitting for better citation accuracy
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
             chunks = text_splitter.split_documents(data)
             
@@ -50,11 +49,16 @@ with st.sidebar:
 # --- 4. UI DISPLAY ---
 st.title("🤖 MaiStorage Technical Agent")
 
+# Display historical messages
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        # If there are references saved for this specific bot message, show them in an expander
+        if "references" in message:
+            with st.expander("📚 View References"):
+                st.markdown(message["references"])
 
-# --- 5. CHAT LOGIC WITH CITATIONS ---
+# --- 5. CHAT LOGIC ---
 query = st.chat_input("Ask a technical question...")
 
 if query:
@@ -67,36 +71,44 @@ if query:
     else:
         with st.chat_message("assistant"):
             with st.status("Agentic Retrieval & Reranking..."):
-                # STEP 1: RETRIEVAL
                 docs = st.session_state.db.similarity_search(query, k=3)
                 
-                # STEP 2: EXTRACT CITATIONS FROM METADATA
-                # PyPDFLoader automatically provides 'page' and 'source' in metadata
-                references = []
+                # CLEANER CITATION LOGIC: Group by page to avoid redundancy
+                pages_found = {}
                 for doc in docs:
-                    page_num = doc.metadata.get("page", "Unknown") + 1 # Convert 0-index to 1-index
-                    ref_text = f"📄 Page {page_num}: \"{doc.page_content[:150]}...\""
-                    references.append(ref_text)
+                    p = doc.metadata.get("page", 0) + 1
+                    if p not in pages_found:
+                        pages_found[p] = []
+                    pages_found[p].append(doc.page_content[:300].replace("\n", " "))
+
+                # Format the "Hidden" reference string
+                ref_string = ""
+                for page, snippets in sorted(pages_found.items()):
+                    ref_string += f"**Page {page}**\n"
+                    for s in snippets:
+                        ref_string += f"> ...{s}...\n\n"
                 
                 context = "\n\n".join([f"[Source Page {d.metadata.get('page')+1}] {d.page_content}" for d in docs])
-                
-                # STEP 3: CONSTRUCT HISTORY
                 history_str = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.chat_history[-5:-1]])
                 
-                # STEP 4: GENERATION
-                prompt = f"""You are a technical assistant. Use ONLY the CONTEXT to answer the question.
-                Mention specific page numbers in your answer if relevant.
-                
+                prompt = f"""Use ONLY the CONTEXT to answer the question.
                 CHAT HISTORY: {history_str}
-                CONTEXT FROM PDF: {context}
+                CONTEXT: {context}
                 QUESTION: {query}"""
                 
                 response = llm.invoke(prompt)
-                
-                # Format final output with a "Sources" footer
-                final_answer = response.content
-                reference_section = "\n\n---\n**Sources used for this answer:**\n" + "\n".join([f"* {r}" for r in references])
-                full_display = final_answer + reference_section
+                answer = response.content
 
-            st.markdown(full_display)
-            st.session_state.chat_history.append({"role": "assistant", "content": full_display})
+            # Display the answer
+            st.markdown(answer)
+            
+            # Display the "Small Tab" for references
+            with st.expander("📚 View References"):
+                st.markdown(ref_string)
+            
+            # Save to history with the references attached
+            st.session_state.chat_history.append({
+                "role": "assistant", 
+                "content": answer, 
+                "references": ref_string
+            })
