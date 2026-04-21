@@ -6,7 +6,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # --- 1. CONFIGURATION ---
-API_KEY = "AIzaSyA0SmLYBntwkTSGwY68PIsuouaodQ5gDFM" 
+API_KEY = "AIzaSyBpaYk9WSnjA8puTdlL-qSIglBX3Kj82NE" 
 os.environ["GOOGLE_API_KEY"] = API_KEY
 
 st.set_page_config(page_title="MaiStorage Conversational Agent", layout="wide")
