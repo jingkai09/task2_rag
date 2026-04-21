@@ -19,9 +19,9 @@ if not api_key:
     st.error("🔑 API Key not found. Please add GOOGLE_API_KEY to Streamlit Secrets or .env file.")
     st.stop()
 
-# Initialize Gemini 1.5 Flash
+# Initialize Gemini 1.5 Flash and the updated Embedding model
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
-embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=api_key)
 
 # --- 2. AGENT STATE DEFINITION ---
 class AgentState(TypedDict):
@@ -50,9 +50,11 @@ with st.sidebar:
             chunks = text_splitter.split_documents(docs)
             
             # Store in Session State to keep it alive during the session
+            # We use a unique collection_name to avoid cache conflicts
             st.session_state.vector_db = Chroma.from_documents(
                 documents=chunks, 
-                embedding=embeddings
+                embedding=embeddings,
+                collection_name="temp_collection"
             )
             st.success("✅ Knowledge Base Updated!")
 
@@ -103,7 +105,7 @@ st.markdown("---")
 
 # Instruction for the interviewer
 if "vector_db" not in st.session_state:
-    st.warning("Please upload a PDF in the sidebar to begin the Agentic RAG demo.")
+    st.info("Please upload a PDF in the sidebar to begin the Agentic RAG demo.")
 
 query = st.chat_input("Ask a technical question about internal specs...")
 
